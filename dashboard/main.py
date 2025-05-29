@@ -196,7 +196,7 @@ def main():
             else:  # selected_state == "All"
                 st.info(
                     "Select a specific state from the sidebar for more details, or 'Telangana' for college-specific analytics.")
-                st.dataframe(filtered_df[['email', 'college', 'state']].head(20),
+                st.dataframe(filtered_df[['email','state']].head(20),
                              help="Showing first 20 rows of all students.")  # Assuming 'email'
 
         with tab3:
