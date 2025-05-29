@@ -3,7 +3,6 @@ import pandas as pd
 import plotly.express as px
 
 # Define known states and a replacement map for standardizing state names
-# These can be expanded as needed
 KNOWN_STATES = sorted([
     'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh',
     'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka',
@@ -11,10 +10,6 @@ KNOWN_STATES = sorted([
     'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim',
     'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand',
     'West Bengal', 'Foreign', 'Unknown', 'Telangana/Andhra Pradesh'
-    # Add Union Territories if they are common in your data:
-    # 'Andaman and Nicobar Islands', 'Chandigarh',
-    # 'Dadra and Nagar Haveli and Daman and Diu', 'Delhi',
-    # 'Jammu and Kashmir', 'Ladakh', 'Lakshadweep', 'Puducherry',
 ])
 
 REPLACEMENT_MAP = {
@@ -23,15 +18,13 @@ REPLACEMENT_MAP = {
     'Telagana': 'Telangana',
     'India (State Undetermined)': 'Unknown',
     'Overseas': 'Foreign',
-    'LKDFJAKLD': 'Unknown',  # Example of handling garbage data
-    'India': 'Unknown',  # Ambiguous entry
+    'LKDFJAKLD': 'Unknown',
+    'India': 'Unknown',
     'Telengana': 'Telangana',
     'Telangana State': 'Telangana',
     'Andhra Pradesh / Telangana': 'Telangana/Andhra Pradesh',
     'Andhra Pradesh /Telangana': 'Telangana/Andhra Pradesh',
     'Andhra Pradesh / Telangana ': 'Telangana/Andhra Pradesh'
-    # Add more specific replacements if you find common typos or alternative names
-    # e.g. 'AP' : 'Andhra Pradesh' (but be careful with short acronyms if they could be college codes)
 }
 
 
@@ -39,25 +32,12 @@ def determine_state_logic(college_val, replacement_map, known_states_list):
     """Determines the state based on the college entry string."""
     if pd.isna(college_val):
         return 'Unknown'
-
     college_str = str(college_val).strip()
-
-    # Rule 1: If '-' is present, it's highly likely a Telangana college based on 'CODE - NAME' format
     if '-' in college_str:
-        # This implies Telangana. College name will be extracted later.
-        # Could add further checks here if non-Telangana entries also use hyphens.
         return 'Telangana'
-
-    # Rule 2: Apply explicit replacements from the map
-    # This handles common misspellings, alternative names, or direct mappings like 'Overseas'.
     potential_state = replacement_map.get(college_str, college_str)
-
-    # Rule 3: Check if the (original or replaced) string is a known state
     if potential_state in known_states_list:
         return potential_state
-
-    # Rule 4: If not recognized after above checks, classify as 'Unknown'
-    # This will catch entries like emails, company names, student names, etc., used in 'college' field.
     return 'Unknown'
 
 
@@ -67,66 +47,63 @@ def load_data(uploaded_file):
         df = pd.read_csv(uploaded_file)
     except Exception as e:
         st.error(f"Error reading CSV file: {e}")
-        return pd.DataFrame()  # Return empty DataFrame
+        return pd.DataFrame()
 
     if 'college' not in df.columns:
         st.error("CSV must contain a 'college' column.")
         return pd.DataFrame()
 
-    # Determine state using the refined logic
-    df['state'] = df['college'].apply(lambda x: determine_state_logic(x, REPLACEMENT_MAP, KNOWN_STATES))
+    # Ensure 'email' column exists, if not, it won't be used in displays later
+    # No error is raised here as 'email' is "recommended", not "required" by instructions
 
-    # Extract college names for Telangana entries that match the 'CODE - NAME' format
+    df['state'] = df['college'].apply(lambda x: determine_state_logic(x, REPLACEMENT_MAP, KNOWN_STATES))
     df['college_name'] = df.apply(
         lambda row: str(row['college']).split('-', 1)[1].strip()
         if row['state'] == 'Telangana' and isinstance(row['college'], str) and '-' in str(row['college'])
         else None,
         axis=1
     )
-
     return df
+
+
+def get_displayable_columns(df, desired_cols):
+    """
+    Filters a list of desired column names to include only those
+    that actually exist in the DataFrame.
+    """
+    return [col for col in desired_cols if col in df.columns]
 
 
 def main():
     st.set_page_config(page_title="College-State Analytics", layout="wide")
-
     st.title("🎓 College & State Analytics Dashboard")
 
-    # File upload
     uploaded_file = st.file_uploader("Add student data in the form of csv", type=["csv"])
 
     if uploaded_file:
         df_processed = load_data(uploaded_file)
 
+        if df_processed.empty and not ('college' in df_processed.columns):  # Handles error from load_data
+            return  # Error messages are shown in load_data
         if df_processed.empty:
-            # load_data would have already shown an error or the file is genuinely empty
-            st.warning("No data to display. The file might be empty or couldn't be processed.")
+            st.warning("No data to display. The file might be empty or processed with no valid records.")
             return
 
-        # Sidebar filters
         st.sidebar.header("Filters")
-
-        # Ensure 'state' column exists and has unique values for the selectbox
         if 'state' in df_processed.columns and not df_processed['state'].empty:
             state_options = sorted([s for s in df_processed['state'].unique() if pd.notna(s)])
         else:
-            state_options = []  # Default to empty if no states found
+            state_options = []
 
-        selected_state = st.sidebar.selectbox(
-            "Select State",
-            ["All"] + state_options
-        )
+        selected_state = st.sidebar.selectbox("Select State", ["All"] + state_options)
 
-        # Filter data based on selection
         if selected_state == "All":
             filtered_df = df_processed
         else:
             filtered_df = df_processed[df_processed['state'] == selected_state]
 
-        # Dashboard metrics (calculated on the full, valid dataset)
         col1, col2, col3 = st.columns(3)
         col1.metric("Total Students", len(df_processed))
-
         if 'state' in df_processed.columns:
             col2.metric("States Represented", df_processed['state'].nunique())
             telangana_count = len(df_processed[df_processed['state'] == 'Telangana'])
@@ -135,22 +112,18 @@ def main():
             col2.metric("States Represented", 0)
             col3.metric("Telangana Students", 0)
 
-        # Tab layout
         tab1, tab2, tab3 = st.tabs(["State Analytics", "College Details", "Raw Data"])
 
         with tab1:
             st.subheader("Student Distribution by State")
             if 'state' in df_processed.columns and not df_processed['state'].empty:
-                # State distribution pie chart
                 fig_pie = px.pie(df_processed, names='state', hole=0.3, title="Overall Student Distribution by State")
                 fig_pie.update_traces(textposition='inside', textinfo='percent+label')
                 st.plotly_chart(fig_pie, use_container_width=True)
 
-                # State-wise bar chart
                 state_counts_series = df_processed['state'].value_counts()
                 state_counts_df = state_counts_series.reset_index()
-                state_counts_df.columns = ['state_name', 'count']  # Explicitly name columns
-
+                state_counts_df.columns = ['state_name', 'count']
                 fig_bar_state = px.bar(state_counts_df, x='state_name', y='count', color='state_name',
                                        title="Student Count by State",
                                        labels={'state_name': 'State', 'count': 'Number of Students'})
@@ -162,15 +135,14 @@ def main():
         with tab2:
             st.subheader(f"Details for: {selected_state}")
             if selected_state == "Telangana":
-                if 'college_name' in filtered_df.columns and not filtered_df[filtered_df['state'] == 'Telangana'][
-                    'college_name'].isnull().all():
-                    telangana_colleges_df = filtered_df[filtered_df['state'] == 'Telangana']
+                # Ensure 'college_name' column exists and is not all NaN for Telangana students
+                if 'college_name' in filtered_df.columns and \
+                        not filtered_df.loc[filtered_df['state'] == 'Telangana', 'college_name'].isnull().all():
 
+                    telangana_colleges_df = filtered_df[filtered_df['state'] == 'Telangana']
                     college_counts_series = telangana_colleges_df['college_name'].value_counts()
                     college_counts_df = college_counts_series.reset_index()
-                    college_counts_df.columns = ['college', 'student_count']  # Explicitly name columns
-
-                    # Filter out entries where college name might be an empty string after processing
+                    college_counts_df.columns = ['college', 'student_count']
                     college_counts_df_display = college_counts_df[college_counts_df['college'].str.strip() != '']
 
                     st.dataframe(college_counts_df_display.rename(
@@ -185,38 +157,50 @@ def main():
                         fig_bar_college.update_layout(xaxis_title="College Name", yaxis_title="Number of Students")
                         st.plotly_chart(fig_bar_college, use_container_width=True)
                     else:
-                        st.info("No valid college names found to plot for Telangana.")
+                        st.info("No valid college names found to plot for Telangana for the current selection.")
                 else:
                     st.info(
-                        "No specific college name data available to display for Telangana. This could be due to formatting in the 'college' column (expected: 'CODE - COLLEGE NAME') or no Telangana students in the filter.")
+                        "No specific college name data available to display for Telangana. This could be due to data formatting or no Telangana students in the current filter.")
+
             elif selected_state != "All":
                 st.info(f"Showing student list from {selected_state}")
-                # Display relevant columns for other states
-                st.dataframe(filtered_df[['email', 'college', 'state']])  # Assuming 'email' column exists
+                desired_cols = ['email', 'college', 'state']
+                cols_to_display = get_displayable_columns(filtered_df, desired_cols)
+                if cols_to_display:
+                    st.dataframe(filtered_df[cols_to_display])
+                else:
+                    st.warning(
+                        f"No standard columns (e.g., 'email', 'college', 'state') found to display for {selected_state}.")
+
             else:  # selected_state == "All"
                 st.info(
                     "Select a specific state from the sidebar for more details, or 'Telangana' for college-specific analytics.")
-                st.dataframe(filtered_df[['email','state']].head(20),
-                             help="Showing first 20 rows of all students.")  # Assuming 'email'
+                desired_cols_preview = ['email', 'college', 'state']  # Show these key columns if they exist
+                cols_to_preview = get_displayable_columns(filtered_df, desired_cols_preview)
+                if cols_to_preview:
+                    st.dataframe(filtered_df[cols_to_preview].head(20),
+                                 help="Showing first 20 rows of all students (relevant columns).")
+                else:
+                    st.warning("No standard columns (e.g., 'email', 'college', 'state') found for preview.")
 
         with tab3:
             st.subheader("Processed Student Data Inspector")
-            st.dataframe(df_processed)
+            st.dataframe(df_processed)  # Displays all columns from the processed DataFrame
 
             if st.button("Export Full Processed Data"):
-                csv = df_processed.to_csv(index=False).encode('utf-8')
+                csv_export = df_processed.to_csv(index=False).encode('utf-8')
                 st.download_button(
                     label="Download Processed Data as CSV",
-                    data=csv,
+                    data=csv_export,
                     file_name="student_data_processed_export.csv",
                     mime="text/csv"
                 )
-
     else:
         st.info("👋 Welcome! Please upload a student data CSV file to begin analysis.")
         st.markdown("""
         **Expected CSV Data Format:**
-        - A CSV file with at least two columns. One column must be named `college`. An `email` column (or similar student identifier) is recommended for data display.
+        - A CSV file with at least two columns. One column must be named `college`.
+        - An `email` column (or similar student identifier) is **recommended** for data display but not strictly required by the application logic.
         - **For Telangana colleges:** The `college` column should ideally follow the format `CODE - COLLEGE NAME` (e.g., `VJIT - VIDYAJYOTHI INSTITUTE OF TECHNOLOGY`). The presence of a hyphen `-` is key for identifying these.
         - **For other states/entries:** The `college` column should contain the state name (e.g., `Andhra Pradesh`, `Karnataka`), a known alias (e.g., `Overseas`), or it will be categorized as 'Unknown' if not recognized.
 
